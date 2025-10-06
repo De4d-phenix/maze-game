@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Canvas Maze Game</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0d1117;
+            color: #c9d1d9;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .game-container {
+            background-color: #161b22;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+            max-width: 90vw;
+            width: 600px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 15px;
+        }
+
+        #gameCanvas {
+            border: 4px solid #30363d;
+            border-radius: 8px;
+            touch-action: none;
+        }
+
+        .message-box {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(46, 170, 71, 0.95); /* Success green */
+            color: #ffffff;
+            padding: 25px 40px;
+            border-radius: 10px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5);
+            text-align: center;
+            font-size: 1.5rem;
+            font-weight: bold;
+            z-index: 100;
+            visibility: hidden;
+            opacity: 0;
+            transition: opacity 0.3s, visibility 0.3s;
+        }
+
+        .message-box.visible {
+            visibility: visible;
+            opacity: 1;
+        }
+
+        .control-button {
+            background-color: #238636;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s, transform 0.1s, box-shadow 0.2s;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+            border: 2px solid transparent; /* Base border for active state */
+        }
+
+        .control-button:hover {
+            background-color: #2ea043;
+        }
+        .control-button:active {
+            transform: translateY(1px);
+        }
+
+        /* Style for Size Selection Buttons */
+        .size-button {
+            background-color: #30363d;
+            border-color: transparent;
+            font-weight: 400;
+            padding: 8px 12px;
+        }
+
+        .size-button:hover {
+            background-color: #444c56;
+        }
+
+        .size-button.active {
+            background-color: #1f6feb; /* Bright blue for active state */
+            border-color: #58a6ff;
+            box-shadow: 0 0 8px rgba(31, 111, 235, 0.5);
+        }
+
+        /* Hint Button Style */
+        .hint-button {
+            background-color: #d19a66; /* Orange/Yellow for hint */
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+        .hint-button:hover {
+            background-color: #e6b278;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="game-container">
+        <h1 class="text-3xl font-bold text-white">The Recursive Maze</h1>
+        <p class="text-sm text-gray-400">Navigate the green square to the red square using **Arrow Keys** or **WASD**.</p>
+        
+        <!-- Timer Display -->
+        <div id="timerDisplay" class="text-2xl font-mono text-blue-400 font-bold tracking-wider">Time: 00:00:000</div>
+        
+        <canvas id="gameCanvas" width="500" height="500"></canvas>
+        
+        <!-- Controls Container -->
+        <div class="flex flex-col sm:flex-row gap-3 items-center w-full justify-center mt-4">
+            <!-- Size Selection -->
+            <div id="sizeSelector" class="flex gap-2 p-2 bg-gray-800 rounded-lg shadow-inner">
+                <button data-size="25" class="size-button">25x25</button>
+                <button data-size="50" class="size-button active">50x50</button>
+                <button data-size="100" class="size-button">100x100</button>
+            </div>
+            <!-- Main Play Button -->
+            <button id="startGameButton" class="control-button w-full sm:w-auto text-lg">Start Game</button>
+        </div>
+        <!-- HINT BUTTON -->
+        <button id="hintButton" class="control-button hint-button w-full sm:w-auto text-lg">Show Hint</button>
+    </div>
+
+    <div id="winMessage" class="message-box">
+        🎉 Congratulations! you winnnn!
+    </div>
+
+    <script>
+        // --- Configuration and State ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const startGameButton = document.getElementById('startGameButton');
+        const sizeButtons = document.querySelectorAll('#sizeSelector .size-button');
+        const hintButton = document.getElementById('hintButton');
+        const winMessage = document.getElementById('winMessage');
+        const timerDisplay = document.getElementById('timerDisplay'); 
+
+        // Initial default size is 50x50
+        let GRID_SIZE = 50; 
+        let WALL_THICKNESS = 2;
+        let CELL_SIZE;
+        let canvasSize = 500; 
+
+        let grid = [];
+        let player = { x: 0, y: 0, size: 0, speed: 0 }; 
+        let isGameActive = false; 
+        let keysPressed = {}; 
+        
+        let startTime = 0;   
+        let elapsedTime = 0; 
+        
+        // Flag to ensure player actually moved before checking for a win
+        let hasMoved = false; 
+        // Minimum time required (in ms) to prevent instantaneous wins
+        const MIN_WIN_TIME = 300; 
+
+        let isSolutionVisible = false; 
+        let solutionPath = []; 
+
+        // Ensure canvas size is set and context is available
+        canvas.width = canvasSize;
+        canvas.height = canvasSize;
+
+        // Utility function (kept for reference, but unused in this version)
+        const performApiCall = async (url, options, maxRetries = 5) => {
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    const response = await fetch(url, options);
+                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                    return await response.json();
+                } catch (error) {
+                    console.error(`Attempt ${i + 1} failed:`, error.message);
+                    if (i === maxRetries - 1) throw error;
+                    const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+            }
+        };
+
+        /**
+         * Formats milliseconds into the requested min:sec:milisec string format.
+         */
+        function formatTime(ms) {
+            const minutes = Math.floor(ms / 60000);
+            const seconds = Math.floor((ms % 60000) / 1000);
+            const milliseconds = Math.floor(ms % 1000); 
+
+            const minStr = String(minutes).padStart(2, '0');
+            const secStr = String(seconds).padStart(2, '0');
+            const msStr = String(milliseconds).padStart(3, '0');
+
+            return `${minStr}:${secStr}:${msStr}`;
+        }
+
+
+        // --- Cell Class for Maze Generation and Pathfinding ---
+        class Cell {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.walls = {
+                    top: true,
+                    right: true,
+                    bottom: true,
+                    left: true,
+                };
+                this.visited = false;
+            }
+        }
+
+        // --- Maze Generation and Solution ---
+
+        function initializeGrid() {
+            grid = [];
+            for (let y = 0; y < GRID_SIZE; y++) {
+                grid[y] = [];
+                for (let x = 0; x < GRID_SIZE; x++) {
+                    grid[y][x] = new Cell(x, y);
+                }
+            }
+            grid[0][0].isStart = true;
+            grid[GRID_SIZE - 1][GRID_SIZE - 1].isEnd = true;
+        }
+
+        function getCell(x, y) {
+            if (x >= 0 && x < GRID_SIZE && y >= 0 && y < GRID_SIZE) {
+                return grid[y][x];
+            }
+            return null;
+        }
+
+        function getNeighbors(cell) {
+            const neighbors = [];
+            const directions = [
+                { dx: 0, dy: -1, wall: 'top', opposite: 'bottom' },
+                { dx: 1, dy: 0, wall: 'right', opposite: 'left' },
+                { dx: 0, dy: 1, wall: 'bottom', opposite: 'top' },
+                { dx: -1, dy: 0, wall: 'left', opposite: 'right' }
+            ];
+
+            for (const dir of directions) {
+                const nextX = cell.x + dir.dx;
+                const nextY = cell.y + dir.dy; 
+                const neighbor = getCell(nextX, nextY);
+
+                if (neighbor && !neighbor.visited) {
+                    neighbors.push({ cell: neighbor, direction: dir });
+                }
+            }
+            return neighbors;
+        }
+
+        function removeWalls(current, next, direction) {
+            current.walls[direction.wall] = false;
+            next.walls[direction.opposite] = false;
+        }
+
+        function generateMaze() {
+            const stack = [];
+            let current = grid[0][0];
+            current.visited = true;
+            stack.push(current);
+
+            while (stack.length > 0) {
+                const neighbors = getNeighbors(current);
+
+                if (neighbors.length > 0) {
+                    const randomNeighbor = neighbors[Math.floor(Math.random() * neighbors.length)];
+                    const next = randomNeighbor.cell;
+                    const direction = randomNeighbor.direction;
+
+                    removeWalls(current, next, direction);
+
+                    current = next;
+                    current.visited = true;
+                    stack.push(current);
+                } else {
+                    current = stack.pop();
+                }
+            }
+        }
+
+        /**
+         * Finds the solution path using Depth-First Search (DFS).
+         */
+        function solveMaze() {
+            const startCell = grid[0][0];
+            const endCell = grid[GRID_SIZE - 1][GRID_SIZE - 1];
+
+            const visited = new Set();
+            const stack = [{ cell: startCell, path: [{ 
+                x: startCell.x * CELL_SIZE + CELL_SIZE / 2, 
+                y: startCell.y * CELL_SIZE + CELL_SIZE / 2 
+            }] }]; 
+            
+            const directions = [
+                { dx: 0, dy: -1, wall: 'top' }, 
+                { dx: 1, dy: 0, wall: 'right' }, 
+                { dx: 0, dy: 1, wall: 'bottom' }, 
+                { dx: -1, dy: 0, wall: 'left' } 
+            ];
+
+            while (stack.length > 0) {
+                const { cell, path } = stack.pop();
+                const key = `${cell.x},${cell.y}`;
+
+                if (cell === endCell) {
+                    return path; 
+                }
+
+                if (visited.has(key)) {
+                    continue;
+                }
+                visited.add(key);
+
+                for (const dir of directions) {
+                    if (!cell.walls[dir.wall]) { 
+                        const nextX = cell.x + dir.dx;
+                        const nextY = cell.y + dir.dy;
+                        const nextCell = getCell(nextX, nextY);
+
+                        if (nextCell && !visited.has(`${nextX},${nextY}`)) {
+                            const nextCellCenterX = nextX * CELL_SIZE + CELL_SIZE / 2;
+                            const nextCellCenterY = nextY * CELL_SIZE + CELL_SIZE / 2;
+                            
+                            const newPath = [...path, { x: nextCellCenterX, y: nextCellCenterY }];
+                            stack.push({ cell: nextCell, path: newPath });
+                        }
+                    }
+                }
+            }
+            return [];
+        }
+
+
+        // --- Rendering Functions ---
+
+        /**
+         * Draws the entire maze grid.
+         */
+        function drawMaze() {
+            ctx.fillStyle = '#161b22'; 
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            for (let y = 0; y < GRID_SIZE; y++) {
+                for (let x = 0; x < GRID_SIZE; x++) {
+                    const cell = grid[y][x];
+                    const x_pos = x * CELL_SIZE;
+                    const y_pos = y * CELL_SIZE;
+
+                    if (cell.isStart) {
+                        ctx.fillStyle = '#2ea043'; 
+                        ctx.fillRect(x_pos, y_pos, CELL_SIZE, CELL_SIZE);
+                    } else if (cell.isEnd) {
+                        ctx.fillStyle = '#f85149'; 
+                        ctx.fillRect(x_pos, y_pos, CELL_SIZE, CELL_SIZE);
+                    }
+
+                    // Draw walls
+                    ctx.strokeStyle = '#30363d'; 
+                    ctx.lineWidth = WALL_THICKNESS;
+
+                    if (cell.walls.top) {
+                        ctx.beginPath();
+                        ctx.moveTo(x_pos, y_pos);
+                        ctx.lineTo(x_pos + CELL_SIZE, y_pos);
+                        ctx.stroke();
+                    }
+                    if (cell.walls.right) {
+                        ctx.beginPath();
+                        ctx.moveTo(x_pos + CELL_SIZE, y_pos);
+                        ctx.lineTo(x_pos + CELL_SIZE, y_pos + CELL_SIZE);
+                        ctx.stroke();
+                    }
+                    if (cell.walls.bottom) {
+                        ctx.beginPath();
+                        ctx.moveTo(x_pos, y_pos + CELL_SIZE);
+                        ctx.lineTo(x_pos + CELL_SIZE, y_pos + CELL_SIZE);
+                        ctx.stroke();
+                    }
+                    if (cell.walls.left) {
+                        ctx.beginPath();
+                        ctx.moveTo(x_pos, y_pos);
+                        ctx.lineTo(x_pos, y_pos + CELL_SIZE);
+                        ctx.stroke();
+                    }
+                }
+            }
+        }
+        
+        /**
+         * Draws the pre-calculated solution path on the canvas.
+         */
+        function drawSolution() {
+            if (solutionPath.length < 2) return;
+
+            // Use a bright, contrasting color for the solution
+            ctx.strokeStyle = '#f9e01f'; 
+            ctx.lineWidth = player.size * 0.5; 
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+
+            ctx.beginPath();
+            
+            ctx.moveTo(solutionPath[0].x, solutionPath[0].y);
+
+            for (let i = 1; i < solutionPath.length; i++) {
+                ctx.lineTo(solutionPath[i].x, solutionPath[i].y);
+            }
+
+            ctx.stroke();
+        }
+
+
+        /**
+         * Draws the player at its current position.
+         */
+        function drawPlayer() {
+            ctx.fillStyle = '#58a6ff'; 
+            ctx.fillRect(
+                player.x - player.size / 2,
+                player.y - player.size / 2,
+                player.size,
+                player.size
+            );
+        }
+
+        /**
+         * The main game loop for drawing and updates.
+         */
+        function gameLoop() {
+            if (!isGameActive) {
+                timerDisplay.textContent = `Time: ${formatTime(elapsedTime)}`;
+                return;
+            }
+
+            elapsedTime = performance.now() - startTime;
+            timerDisplay.textContent = `Time: ${formatTime(elapsedTime)}`;
+
+            updatePlayerPosition();
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawMaze();
+            
+            if (isSolutionVisible) {
+                drawSolution();
+            }
+
+            drawPlayer();
+
+            if (checkWinCondition()) {
+                handleWin();
+                return; 
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+
+        // --- Player Logic and Input Handling ---
+
+        /**
+         * Calculates movement based on pressed keys and updates player position if no collision occurs.
+         */
+        function updatePlayerPosition() {
+            if (!isGameActive) return; 
+
+            let deltaX = 0;
+            let deltaY = 0;
+            const speed = player.speed;
+
+            if (keysPressed['arrowup'] || keysPressed['w']) {
+                deltaY -= speed;
+            }
+            if (keysPressed['arrowdown'] || keysPressed['s']) {
+                deltaY += speed;
+            }
+            if (keysPressed['arrowleft'] || keysPressed['a']) {
+                deltaX -= speed;
+            }
+            if (keysPressed['arrowright'] || keysPressed['d']) {
+                deltaX += speed;
+            }
+
+            let movedSuccessfully = false;
+
+            if (deltaX !== 0 || deltaY !== 0) {
+                // Attempt X movement
+                if (deltaX !== 0) {
+                    const direction = deltaX > 0 ? 1 : 3; // Right (1) or Left (3)
+                    const newX = player.x + deltaX;
+                    if (!checkCollision(newX, player.y, direction)) {
+                        player.x = newX;
+                        movedSuccessfully = true;
+                    }
+                }
+
+                // Attempt Y movement
+                if (deltaY !== 0) {
+                    const direction = deltaY > 0 ? 2 : 0; // Down (2) or Up (0)
+                    const newY = player.y + deltaY;
+                    if (!checkCollision(player.x, newY, direction)) {
+                        player.y = newY;
+                        movedSuccessfully = true;
+                    }
+                }
+            }
+            
+            if (movedSuccessfully) {
+                hasMoved = true;
+            }
+        }
+
+        /**
+         * Checks if the player has reached the exit cell.
+         */
+        function checkWinCondition() {
+            // FIX 1: Prevent win if player hasn't moved OR if less than MIN_WIN_TIME has passed.
+            if (!hasMoved || elapsedTime < MIN_WIN_TIME) {
+                return false;
+            }
+            
+            // Player's grid coordinates (use Math.round for better center alignment check)
+            const playerGridX = Math.floor(player.x / CELL_SIZE);
+            const playerGridY = Math.floor(player.y / CELL_SIZE);
+
+            return playerGridX === GRID_SIZE - 1 && playerGridY === GRID_SIZE - 1;
+        }
+
+        /**
+         * Shows the win message and stops the game.
+         */
+        function handleWin() {
+            isGameActive = false; 
+            
+            const finalTime = formatTime(elapsedTime);
+            
+            winMessage.innerHTML = `🎉 Congratulations! You escaped the ${GRID_SIZE}x${GRID_SIZE} maze in <strong>${finalTime}</strong>!`;
+            winMessage.classList.add('visible');
+
+            isSolutionVisible = false;
+            hintButton.textContent = 'Show Hint';
+            
+            startGameButton.textContent = 'Start New Game';
+
+            setTimeout(() => {
+                winMessage.classList.remove('visible');
+            }, 5000);
+        }
+
+        /**
+         * Checks for collision against the walls of the current cell.
+         */
+        function checkCollision(newX, newY, direction) {
+            const playerHalfSize = player.size / 2;
+            const buffer = WALL_THICKNESS + 0.1; // Small safety buffer for floats
+
+            // Determine the cell the player is currently centered over (or near)
+            const currentCellX = Math.floor(newX / CELL_SIZE);
+            const currentCellY = Math.floor(newY / CELL_SIZE);
+            const currentCell = getCell(currentCellX, currentCellY);
+
+            if (!currentCell) {
+                 // Check canvas boundaries
+                if (newX - playerHalfSize < buffer || newX + playerHalfSize > canvas.width - buffer ||
+                    newY - playerHalfSize < buffer || newY + playerHalfSize > canvas.height - buffer) {
+                    return true;
+                }
+                return false; // Should not happen internally
+            }
+
+
+            // 2. Check internal maze walls
+            switch (direction) {
+                case 0: // UP (Check top wall)
+                    if (currentCell.walls.top) {
+                        const topWallY = currentCellY * CELL_SIZE;
+                        // Player's top edge must not cross the wall line
+                        if (newY - playerHalfSize < topWallY + buffer) return true;
+                    }
+                    break;
+                case 1: // RIGHT (Check right wall)
+                    if (currentCell.walls.right) {
+                        const rightWallX = (currentCellX + 1) * CELL_SIZE;
+                        // Player's right edge must not cross the wall line
+                        if (newX + playerHalfSize > rightWallX - buffer) return true;
+                    }
+                    break;
+                case 2: // DOWN (Check bottom wall)
+                    if (currentCell.walls.bottom) {
+                        const bottomWallY = (currentCellY + 1) * CELL_SIZE;
+                        // Player's bottom edge must not cross the wall line
+                        if (newY + playerHalfSize > bottomWallY - buffer) return true;
+                    }
+                    break;
+                case 3: // LEFT (Check left wall)
+                    if (currentCell.walls.left) {
+                        const leftWallX = currentCellX * CELL_SIZE;
+                        // Player's left edge must not cross the wall line
+                        if (newX - playerHalfSize < leftWallX + buffer) return true;
+                    }
+                    break;
+            }
+
+            return false;
+        }
+
+        /**
+         * Records a key press into the global keysPressed state.
+         */
+        function handleKeyDown(e) {
+            const key = e.key.toLowerCase();
+            if (['arrowup', 'w', 'arrowdown', 's', 'arrowleft', 'a', 'arrowright', 'd'].includes(key)) {
+                if (!isGameActive) {
+                    startGame();
+                }
+                e.preventDefault();
+                keysPressed[key] = true;
+            }
+        }
+
+        /**
+         * Removes a key from the global keysPressed state upon release.
+         */
+        function handleKeyUp(e) {
+            const key = e.key.toLowerCase();
+            delete keysPressed[key];
+        }
+
+
+        // --- Initialization and Setup ---
+
+        /**
+         * Sets up the player state based on the calculated CELL_SIZE.
+         */
+        function setupPlayer() {
+            const playerCellCenter = CELL_SIZE / 2;
+            player.x = playerCellCenter;
+            player.y = playerCellCenter;
+            // Set player size to a maximum of 40% of the cell size,
+            // but ensure it's not too small (min 5 pixels for 100x100 grid)
+            player.size = Math.max(CELL_SIZE * 0.4, 5); 
+            // Player speed is proportional to cell size for consistent feel
+            player.speed = CELL_SIZE / 7; 
+            keysPressed = {}; 
+        }
+
+        /**
+         * Generates the maze structure and resets the game state.
+         */
+        function setupGame() {
+            CELL_SIZE = canvas.width / GRID_SIZE;
+
+            initializeGrid();
+            generateMaze();
+            setupPlayer();
+            
+            solutionPath = solveMaze();
+
+            winMessage.classList.remove('visible');
+
+            isGameActive = false;
+            elapsedTime = 0;
+            hasMoved = false; 
+            timerDisplay.textContent = 'Time: 00:00:000';
+            
+            isSolutionVisible = false;
+            hintButton.textContent = 'Show Hint';
+
+            drawMaze(); 
+            drawPlayer();
+            startGameButton.textContent = 'Start Game';
+        }
+
+        /**
+         * Starts the timer and enables player movement.
+         */
+        function startGame() {
+            if (isGameActive) return; 
+            
+            startTime = performance.now();
+            isGameActive = true;
+            startGameButton.textContent = 'Reset/New Maze';
+            requestAnimationFrame(gameLoop); 
+        }
+        
+        /**
+         * Handles button click for starting a new or generating a new game based on current size.
+         */
+        function handleGameButtonClick() {
+            if (isGameActive) {
+                setupGame(); 
+            } else {
+                startGame();
+            }
+        }
+
+        /**
+         * Toggles the visibility of the solution path.
+         */
+        function toggleHint() {
+            isSolutionVisible = !isSolutionVisible;
+            hintButton.textContent = isSolutionVisible ? 'Hide Hint' : 'Show Hint';
+
+            // Manually redraw if the game is paused
+            if (!isGameActive) {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                drawMaze();
+                if (isSolutionVisible) {
+                    drawSolution();
+                }
+                drawPlayer();
+            }
+        }
+
+        /**
+         * Updates the GRID_SIZE and redraws the maze preview.
+         */
+        function handleSizeChange(e) {
+            const button = e.currentTarget;
+            const newSize = parseInt(button.dataset.size);
+
+            if (newSize === GRID_SIZE) return;
+
+            GRID_SIZE = newSize;
+            
+            sizeButtons.forEach(btn => btn.classList.remove('active'));
+            button.classList.add('active');
+
+            setupGame(); 
+        }
+
+        // --- Event Listeners ---
+
+        window.onload = () => {
+            setupGame();
+
+            document.addEventListener('keydown', handleKeyDown);
+            document.addEventListener('keyup', handleKeyUp);
+
+            startGameButton.addEventListener('click', handleGameButtonClick);
+            hintButton.addEventListener('click', toggleHint);
+            
+            sizeButtons.forEach(button => {
+                button.addEventListener('click', handleSizeChange);
+            });
+
+
+            // Handle touch/swipe input (simplified controls for mobile)
+            let startX = 0;
+            let startY = 0;
+            const threshold = 20;
+            const swipeDuration = 100; // Time (ms) to simulate a key press for a swipe
+
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                startX = e.touches[0].clientX;
+                startY = e.touches[0].clientY;
+            });
+
+            canvas.addEventListener('touchend', (e) => {
+                if (!e.changedTouches) return;
+
+                const endX = e.changedTouches[0].clientX;
+                const endY = e.changedTouches[0].clientY;
+                const deltaX = endX - startX;
+                const deltaY = endY - startY;
+
+                // Start game if it's inactive and a significant swipe happens
+                if (!isGameActive && (Math.abs(deltaX) > threshold || Math.abs(deltaY) > threshold)) {
+                    startGame();
+                }
+                
+                if (!isGameActive) return;
+
+                if (Math.abs(deltaX) > threshold || Math.abs(deltaY) > threshold) {
+                    let keyToPress = null;
+                    
+                    if (Math.abs(deltaX) > Math.abs(deltaY)) {
+                        // Horizontal swipe
+                        keyToPress = deltaX > 0 ? 'arrowright' : 'arrowleft';
+                    } else {
+                        // Vertical swipe
+                        keyToPress = deltaY > 0 ? 'arrowdown' : 'arrowup';
+                    }
+
+                    if (keyToPress) {
+                        // FIX: Simulate key press instead of instant teleport
+                        keysPressed[keyToPress] = true;
+                        hasMoved = true;
+                        
+                        // Stop the movement shortly after, simulating a quick tap
+                        setTimeout(() => {
+                            delete keysPressed[keyToPress];
+                        }, swipeDuration);
+                    }
+                }
+            });
+        };
+    </script>
+</body>
+</html>
