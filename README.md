@@ -1,1 +1,1 @@
-<a href="https://github.com/De4d-phenix/maze-game" target="_blank">View on GitHub</a>
+<a href="https://de4d-phenix.github.io/maze-game/" target="_blank">View on GitHub</a>
